@@ -1,0 +1,63 @@
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: es-data
+  namespace: ump-es-staging
+  labels:
+    type: data
+    component: es-cluster
+spec:
+  serviceName: "es-cluster"
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        type: data
+        component: es-cluster
+      annotations:
+        pod.alpha.kubernetes.io/initialized: "true"
+    spec:
+      securityContext:
+          fsGroup: 0
+      containers:
+      - name: elasticsearch
+        env:
+        - name: SERVICE
+          value: "es-cluster"
+        - name: ES_JAVA_OPTS
+          value: "-Xms2g -Xmx2g"
+        - name: KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_MASTER
+          value: "false"
+        image: "fabric8/elasticsearch-k8s:2.3.2"
+        imagePullPolicy: "Always"
+        ports:
+        - containerPort: 9300
+          name: transport
+        resources:
+          requests:
+            cpu: "4"
+            memory: "8Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        volumeMounts:
+        - mountPath: /usr/share/elasticsearch/data
+          name: elasticsearch-data
+  volumeClaimTemplates:
+  - metadata:
+      name: elasticsearch-data
+      annotations:
+         volume.alpha.kubernetes.io/storage-class: "cinder-performance"
+    spec:
+      accessModes: [ ReadWriteOnce ]
+      resources:
+        requests:
+          storage: "400Gi"

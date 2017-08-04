@@ -1,0 +1,235 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "es-client"
+  namespace: kchitta
+spec:
+  ports:
+    - port: 9200
+      targetPort: http
+  selector:
+    component: "es-client"
+    type: client
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "es-cluster"
+  namespace: kchitta
+spec:
+  clusterIP: None
+  ports:
+    - port: 9300
+      targetPort: 9300
+  selector:
+    component: es-cluster
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: es-client
+  namespace: kchitta
+  labels:
+    type: client
+    component: es-client
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        type: client
+        component: es-client
+    spec:
+      securityContext:
+          fsGroup: 0
+      containers:
+      - name: elasticsearch-client
+        env:
+        - name: SERVICE
+          value: "es-cluster"
+        - name: KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_DATA
+          value: "false"
+        - name: NODE_MASTER
+          value: "false"
+        resources:
+          requests:
+            cpu: "1600m"
+            memory: "3276Mi"
+          limits:
+            cpu: "1600m"
+            memory: "3276Mi"
+        image: "ecr.vip.ebayc3.com/kchitta/es-petset:5.1.1"
+        imagePullPolicy: "Always"
+        ports:
+        - containerPort: 9200
+          name: http
+        - containerPort: 9300
+          name: transport
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: "es-master"
+  namespace: kchitta
+  labels:
+    type: master
+    component: es-cluster
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        type: master
+        component: es-cluster
+    spec:
+      securityContext:
+          fsGroup: 0
+      containers:
+      - name: elasticsearch
+        env:
+        - name: SERVICE
+          value: "es-cluster"
+        - name: KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_DATA
+          value: "false"
+        resources:
+          requests:
+            cpu: "1600m"
+            memory: "3276Mi"
+          limits:
+            cpu: "1600m"
+            memory: "3276Mi"
+        image: "ecr.vip.ebayc3.com/kchitta/es-petset:5.1.1"
+        imagePullPolicy: "Always"
+        ports:
+        - containerPort: 9300
+          name: transport
+---
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: es-data
+  namespace: kchitta
+  labels:
+    type: data
+    component: es-cluster
+spec:
+  serviceName: "es-cluster"
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        type: data
+        component: es-cluster
+      annotations:
+        pod.alpha.kubernetes.io/initialized: "true"
+    spec:
+      securityContext:
+          fsGroup: 0
+      containers:
+      - name: elasticsearch
+        env:
+        - name: SERVICE
+          value: "es-cluster"
+        - name: KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_MASTER
+          value: "false"
+        image: "ecr.vip.ebayc3.com/kchitta/es-petset:5.1.1"
+        imagePullPolicy: "Always"
+        ports:
+        - containerPort: 9300
+          name: transport
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "2Gi"
+          limits:
+            cpu: "1"
+            memory: "4Gi"
+        volumeMounts:
+        - mountPath: /usr/share/elasticsearch/data
+          name: elasticsearch-data
+  volumeClaimTemplates:
+  - metadata:
+      name: elasticsearch-data
+      annotations:
+         volume.alpha.kubernetes.io/storage-class: "cinder-performance"
+    spec:
+      accessModes: [ ReadWriteOnce ]
+      resources:
+        requests:
+          storage: "5Gi"
+---
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  labels:
+    k8s-app: kibana-logging
+    kubernetes.io/cluster-service: "false"
+    version: v1
+  name: kibana-logging-v1
+  namespace: kchitta
+spec:
+  replicas: 1
+  selector:
+    k8s-app: kibana-logging
+    version: v1
+  template:
+    metadata:
+      labels:
+        k8s-app: kibana-logging
+        kubernetes.io/cluster-service: "false"
+        version: v1
+    spec:
+      containers:
+        -
+          env:
+            -
+              name: ELASTICSEARCH_URL
+              value: "http://es-client.kchitta.svc.31.tess.io:9200"
+          image: "ecr.vip.ebayc3.com/kchitta/kibana:5.1.1"
+          imagePullPolicy: Always
+          name: kibana-logging
+          ports:
+            -
+              containerPort: 5601
+              name: ui
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 2048Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana-logging
+  namespace: kchitta
+  labels:
+    k8s-app: kibana-logging
+    kubernetes.io/cluster-service: "false"
+    kubernetes.io/name: "Kibana"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 5601
+    protocol: TCP
+  selector:
+    k8s-app: kibana-logging

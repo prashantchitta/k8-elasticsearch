@@ -1,0 +1,254 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: es-client
+  labels:
+    component: elasticsearch
+    role: client
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        component: elasticsearch
+        role: client
+    spec:
+      containers:
+      - name: es-client
+        image: ecr.vip.ebayc3.com/kchitta/pires-elastic:5.2.2
+        imagePullPolicy: Always
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: "CLUSTER_NAME"
+          value: "myesdb"
+        - name: NODE_MASTER
+          value: "false"
+        - name: NODE_DATA
+          value: "false"
+        - name: HTTP_ENABLE
+          value: "true"
+        - name: "ES_JAVA_OPTS"
+          value: "-Xms256m -Xmx256m"
+        ports:
+        - containerPort: 9200
+          name: http
+          protocol: TCP
+        - containerPort: 9300
+          name: transport
+          protocol: TCP
+        volumeMounts:
+        - name: storage
+          mountPath: /data
+      volumes:
+          - emptyDir:
+              medium: ""
+            name: "storage"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch-discovery
+  labels:
+    component: elasticsearch
+    role: master
+spec:
+  selector:
+    component: elasticsearch
+    role: master
+  ports:
+  - name: transport
+    port: 9300
+    protocol: TCP
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: es-master
+  labels:
+    component: elasticsearch
+    role: master
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        component: elasticsearch
+        role: master
+    spec:
+      containers:
+      - name: es-master
+        image: ecr.vip.ebayc3.com/kchitta/pires-elastic:5.2.2
+        imagePullPolicy: Always
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: "CLUSTER_NAME"
+          value: "myesdb"
+        - name: "NUMBER_OF_MASTERS"
+          value: "2"
+        - name: NODE_MASTER
+          value: "true"
+        - name: NODE_INGEST
+          value: "false"
+        - name: NODE_DATA
+          value: "false"
+        - name: HTTP_ENABLE
+          value: "false"
+        - name: "ES_JAVA_OPTS"
+          value: "-Xms256m -Xmx256m"
+        ports:
+        - containerPort: 9300
+          name: transport
+          protocol: TCP
+        volumeMounts:
+        - name: storage
+          mountPath: /data
+      volumes:
+          - emptyDir:
+              medium: ""
+            name: "storage"
+---
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  labels:
+    component: elasticsearch
+    role: data
+  name: es-data
+spec:
+  replicas: 3
+  serviceName: elasticsearch-data
+  template:
+    metadata:
+      labels:
+        component: elasticsearch
+        role: data
+      annotations:
+        pod.alpha.kubernetes.io/initialized: "true"
+    spec:
+      containers:
+        -
+          env:
+            -
+              name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            -
+              name: CLUSTER_NAME
+              value: myesdb
+            -
+              name: NODE_MASTER
+              value: "false"
+            -
+              name: NODE_INGEST
+              value: "false"
+            -
+              name: HTTP_ENABLE
+              value: "false"
+            -
+              name: ES_JAVA_OPTS
+              value: "-Xms256m -Xmx256m"
+          image: "ecr.vip.ebayc3.com/kchitta/pires-elastic:5.2.2"
+          imagePullPolicy: Always
+          name: es-data
+          ports:
+            -
+              containerPort: 9300
+              name: transport
+              protocol: TCP
+          volumeMounts:
+            -
+              mountPath: /data
+              name: storage
+      volumes:
+       -
+         emptyDir:
+          medium: ""
+         name: storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch-data
+  labels:
+    component: elasticsearch
+    role: data
+spec:
+  ports:
+  - port: 9300
+    name: transport
+  clusterIP: None
+  selector:
+    component: elasticsearch
+    role: data
+---
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  labels:
+    k8s-app: kibana-logging
+    kubernetes.io/cluster-service: "false"
+    version: v1
+  name: kibana-logging-v1
+spec:
+  replicas: 1
+  selector:
+    k8s-app: kibana-logging
+    version: v1
+  template:
+    metadata:
+      labels:
+        k8s-app: kibana-logging
+        kubernetes.io/cluster-service: "false"
+        version: v1
+    spec:
+      containers:
+        -
+          env:
+            -
+              name: ELASTICSEARCH_URL
+              value: "http://elasticsearch.kchitta.svc.31.tess.io:9200"
+          image: "ecr.vip.ebayc3.com/kchitta/kibana:5.2.2"
+          imagePullPolicy: Always
+          name: kibana-logging
+          ports:
+            -
+              containerPort: 5601
+              name: ui
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 2048Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana-logging
+  namespace: kchitta
+  labels:
+    k8s-app: kibana-logging
+    kubernetes.io/cluster-service: "false"
+    kubernetes.io/name: "Kibana"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 5601
+    protocol: TCP
+  selector:
+    k8s-app: kibana-logging

@@ -1,0 +1,34 @@
+piVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: es-curator
+  namespace: kchitta
+  labels:
+    k8s-app: es-curator
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        k8s-app: es-curator
+    spec:
+      containers:
+      - name: es-curator
+        image: ecr.vip.ebayc3.com/kchitta/elasticsearch-curator:4.2.3
+        imagePullPolicy: Always
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        args:
+        - /usr/local/bin/curator-cron
+        - --host=10.67.204.88
+        - --port=9200
+        - delete_indices
+        - --filter_list='[{"filtertype":"age","source":"name","direction":"older","timestring":"%Y.%m.%d","unit":"days","unit_count":$(REMOVE_INDICES_OLDER_THAN_DAYS)}]'
+        env:
+        - name: REMOVE_INDICES_OLDER_THAN_DAYS
+          value: "2"
